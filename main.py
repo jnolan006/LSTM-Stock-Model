@@ -1,22 +1,17 @@
 import psycopg2
 import pandas as pd
 from datetime import datetime, timedelta
-from datetime import date, timedelta
-from sklearn.tree import DecisionTreeClassifier
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+from keras.callbacks import ModelCheckpoint
+from keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
+from keras.layers import Embedding, LSTM, Dense
+from sklearn.preprocessing import LabelEncoder
 import numpy as np
-import matplotlib.pyplot as plt
-import joblib
-from sklearn.tree import plot_tree
-from sklearn.metrics import accuracy_score
-from sklearn.tree import _tree
-from sklearn.ensemble import RandomForestClassifier
-import xgboost as xgb
-import pickle
-from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
 
-# Connect to database and extract data
+# Connect to database
 host = "ec2-52-6-117-96.compute-1.amazonaws.com"
 dbname = "dftej5l5m1cl78"
 user = "aiuhlrpcnftsjs"
@@ -25,120 +20,129 @@ password = "8b2220cd5b6da572369545d91f6b435dfc37a42bfec6b6e2a5c9f236dfb65f42"
 conn = psycopg2.connect(host=host, dbname=dbname, user=user, password=password)
 cur = conn.cursor()
 
-query = "SELECT date, symbol, CASE WHEN close-open < 0 then 1 when close-open >= 0 then 0 END as category, close, open, ema_200, ema_50, ema_12, ema_26, high, low, volume, upper_band, lower_band, macd_results, rsi, stochastic_oscillator, ((close - open) / open) * 100 AS daily_percent_change, ((open - LAG(close) OVER (ORDER BY symbol, date)) / LAG(close) OVER (ORDER BY symbol, date)) * 100 AS overnight_percent_change, ((high - low) / low) * 100 AS percentage_volatility, ABS((close - open) / open) * 100 AS absolute_percent_change, EXTRACT(DOW FROM date) AS day_of_week, case when grp = 1 and lag(grp) over(partition by symbol order by date) = 0 then 1 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 0 then 2 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 1 and lag(grp,3) over(partition by symbol order by date) = 0 then 3 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 1 and lag(grp,3) over(partition by symbol order by date) = 1 and lag(grp,4) over(partition by symbol order by date) = 0 then 4 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 1 and lag(grp,3) over(partition by symbol order by date) = 1 and lag(grp,4) over(partition by symbol order by date) = 1 and lag(grp,5) over(partition by symbol order by date) = 0 then 5 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 1 and lag(grp,3) over(partition by symbol order by date) = 1 and lag(grp,4) over(partition by symbol order by date) = 1 and lag(grp,5) over(partition by symbol order by date) = 1 and lag(grp,6) over(partition by symbol order by date) = 0 then 6 when  grp = 1 and lag(grp) over(partition by symbol order by date) = 1 and lag(grp,2) over(partition by symbol order by date) = 1 and lag(grp,3) over(partition by symbol order by date) = 1 and lag(grp,4) over(partition by symbol order by date) = 1 and lag(grp,5) over(partition by symbol order by date) = 1 and lag(grp,6) over(partition by symbol order by date) = 1 and lag(grp,7) over(partition by symbol order by date) = 0 then 7 else 0 end as consecutive_green_days, case when grp = 0 and lag(grp) over(partition by symbol order by date) = 1 then 1 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 1 then 2 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 0 and lag(grp,3) over(partition by symbol order by date) = 1 then 3 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 0 and lag(grp,3) over(partition by symbol order by date) = 0 and lag(grp,4) over(partition by symbol order by date) = 1 then 4 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 0 and lag(grp,3) over(partition by symbol order by date) = 0 and lag(grp,4) over(partition by symbol order by date) = 0 and lag(grp,5) over(partition by symbol order by date) = 1 then 5 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 0 and lag(grp,3) over(partition by symbol order by date) = 0 and lag(grp,4) over(partition by symbol order by date) = 0 and lag(grp,5) over(partition by symbol order by date) = 0 and lag(grp,6) over(partition by symbol order by date) = 1 then 6 when  grp = 0 and lag(grp) over(partition by symbol order by date) = 0 and lag(grp,2) over(partition by symbol order by date) = 0 and lag(grp,3) over(partition by symbol order by date) = 0 and lag(grp,4) over(partition by symbol order by date) = 0 and lag(grp,5) over(partition by symbol order by date) = 0 and lag(grp,6) over(partition by symbol order by date) = 0 and lag(grp,7) over(partition by symbol order by date) = 1 then 7 else 0 end as consecutive_red_days,     volume / AVG(volume) OVER (PARTITION BY symbol ORDER BY date ROWS BETWEEN 30 PRECEDING AND CURRENT ROW) AS relative_volume FROM (SELECT *, CASE WHEN close > open THEN 1 when close <= open then 0 END AS grp FROM daily_stock_price_fin) as test ORDER BY symbol, date;"
-cur.execute(query)
+# define the stock symbol and the date range
+symbol = "JPM"
+end_date = datetime(2023, 1, 4)
+start_date = datetime(2000, 1, 1)
+
+# Pull data and format
+
+query = "SELECT date, close, ema_200, ema_50, ema_12, ema_26, upper_band, lower_band, macd_results, stochastic_oscillator, rsi FROM daily_stock_price WHERE date >= %s AND date <= %s ORDER BY date;"
+cur.execute(query, (start_date, end_date))
 data = cur.fetchall()
 
-data = pd.DataFrame(data, columns=[ "date", "symbol", "category", "close", "open", "ema_200", "ema_50", "ema_12", "ema_26", "high", "low", "volume", "upper_band", "lower_band", "macd_results", "rsi", "stochastic_oscillator", "daily_percent_change", "overnight_percent_change", "percentage_volatility", "absolute_percent_change", "day_of_week", "consecutive_green_days",  "consecutive_red_days", "relative_volume"])
+data = pd.DataFrame(data, columns=['date', 'close', 'ema_200', 'ema_50', 'ema_12', 'ema_26', 'upper_band', 'lower_band', 'macd_results', 'stochastic_oscillator', 'rsi'])
+data = data.sort_values(by='date', ascending=True)
 
-# Format data for model
+X = data[['close', 'ema_200', 'ema_50', 'ema_12', 'ema_26', 'upper_band', 'lower_band', 'macd_results', 'stochastic_oscillator', 'rsi']].values
 
-data = data.sort_values(by=['symbol', 'date'], ascending=[True, True])
+close_prices = data['close'].values
+y = (close_prices - np.roll(close_prices, 5)) / np.roll(close_prices, 5)
 
-data = data.iloc[:-1]
-
-scaled_data_2 = data.iloc[100:]
-
-sc = MinMaxScaler()
-
-start_date = date(2000, 1, 1)
-end_date = date(2023, 1, 1)
-
-if start_date not in scaled_data_2['date'].values:
-    start_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    start_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    start_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    start_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    start_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    end_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    end_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    end_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    end_date += timedelta(days=1)
-if start_date not in scaled_data_2['date'].values:
-    end_date += timedelta(days=1)
-
-symbols = data['symbol'].unique()
-
-X_train = []
-y_train = []
-
-for symbol in symbols:
-    symbol_data = scaled_data_2[scaled_data_2['symbol'] == symbol]
-
-    date_range_data = symbol_data[(symbol_data['date'] >= start_date) & (symbol_data['date'] <= end_date)]
-
-    target_variable = 'category'
-
-    data_points_in_group = 20
-
-    for i in range(len(date_range_data) - data_points_in_group - 1):
-        current_group_features = date_range_data.iloc[i:i + data_points_in_group, 2:].values
-        sc.fit(current_group_features)
-        current_group_features_scaled = sc.transform(current_group_features)
-
-        target_value = date_range_data.iloc[i + data_points_in_group + 1, 2]
-
-        X_train.append(current_group_features_scaled)
-        y_train.append(target_value)
+y = y.reshape(-1, 1)
+y = y[30:]
+X = X[30:]
 
 
-X_train_ema_2 = np.array(X_train)
-Y_train_ema_2 = np.array(y_train)
+split_index = int(0.8 * len(X))
+X_train, y_train = X[:split_index], y[:split_index]
+X_test, y_test = X[split_index:], y[split_index:]
+print(len(X_test), len(y_test))
 
-X_train_ema_2, Y_train_ema_2 = np.array(X_train_ema_2), np.array(Y_train_ema_2)
+sequence_length = 100
+batch_size = 1
+train_data = tf.keras.preprocessing.sequence.TimeseriesGenerator(
+    X_train,y_train,
+    length=sequence_length,
+    sampling_rate=1,
+    stride=1,
+    start_index=0,
+    end_index=None,
+    shuffle=False,
+    reverse=False,
+    batch_size=batch_size
+)
 
-X_train_ema_3 = X_train_ema_2.reshape((X_train_ema_2.shape[0], -1))
-print("X_train_ema_3 shape:", X_train_ema_3.shape)
+filtered_train_data = []
+for i in range(len(train_data)):
+    x_sequence, y_sequence = train_data[i]
+    if (y_sequence >= 0.015) or (y_sequence <= -0.015):
+        filtered_train_data.append(train_data[i])
 
-X_train, X_val, y_train, y_val = train_test_split(X_train_ema_3, Y_train_ema_2, test_size=0.3, random_state=42)
+sequence_length = 100
+batch_size = 1
+test_data = tf.keras.preprocessing.sequence.TimeseriesGenerator(
+    X_test,y_test,
+    length=sequence_length,
+    sampling_rate=1,
+    stride=1,
+    start_index=0,
+    end_index=None,
+    shuffle=False,
+    reverse=False,
+    batch_size=batch_size
+)
 
-print("X_train shape:", X_train.shape)
-print("X_val shape:", X_val.shape)
-print("y_train shape:", y_train.shape)
-print("y_val shape:", y_val.shape)
+# define the LSTM model
+model = Sequential()
+model.add(LSTM(150, input_shape=(100, 10)))  # LSTM layer with 64 units
+model.add(Dense(1, activation='sigmoid'))  # Output layer for binary classification
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-# Train model
-clf = xgb.XGBClassifier(n_estimators=100, random_state=42)
-clf.fit(X_train, y_train)
+model_checkpoint = ModelCheckpoint('stock_model_v4_v1.h5', save_best_only=True, monitor='val_loss', mode='min', verbose=1)
 
-# Save the model as a pickle (pkl) file
-with open('xgboost_model_neg_fin.pkl', 'wb') as pkl_file:
-    pickle.dump(clf, pkl_file)
+accumulated_X = []  
+accumulated_y = []  
 
-# test trained model
-raw_predictions = clf.predict_proba(X_val)[:, 1]  
+for batch, (X_train, y_train) in enumerate(filtered_train_data):
+    y_train = np.where(y_train > 0, 1, 0)
 
-custom_threshold = 0.7
+    X_normalized = np.empty_like(X_train, dtype=np.float64)  
+    for sequence in range(X_train.shape[0]):
+        first_data_point = X_train[0, 0]  
+        X_normalized = (X_train - first_data_point) / first_data_point
+        X_train[:, :, :7] = X_normalized[:, :, :7]
+    accumulated_X.append(X_train)
+    accumulated_y.append(y_train)
 
-binary_predictions = (raw_predictions >= custom_threshold).astype(int)
+np.set_printoptions(threshold=np.inf)
+accumulated_X = np.vstack(accumulated_X)
+accumulated_y = np.vstack(accumulated_y)
 
-category_0_count = np.sum(binary_predictions == 0)
-category_1_count = np.sum(binary_predictions == 1)
+history = model.fit(accumulated_X, accumulated_y, batch_size=1, epochs=10)
+accuracy = history.history['accuracy']
+print(f"accuracy: {accuracy}")
 
-print(f'Predicted Category 0 count: {category_0_count}')
-print(f'Predicted Category 1 count: {category_1_count}')
+model.save('stock_model_v4_v1.h5')
 
-total_category_0 = np.sum(binary_predictions == 0)
-correct_category_0 = np.sum((y_val == 0) & (binary_predictions == 0))
+cur.execute("DROP TABLE IF EXISTS stock_predictions_v4")
 
-total_category_1 = np.sum(binary_predictions == 1)
-correct_category_1 = np.sum((y_val == 1) & (binary_predictions == 1))
+cur.execute("CREATE TABLE IF NOT EXISTS stock_predictions_v4 (date REAL, actual_change REAL, predicted_change REAL)")
 
-category_0_accuracy = correct_category_0 / total_category_0
-category_1_accuracy = correct_category_1 / total_category_1
+for batch, (X_test, y_test) in enumerate(test_data):
+    y_test = np.where(y_test > 0, 1, 0)
 
-# Print the results
-print(f'Category 0 Accuracy: {category_0_accuracy}')
-print(f'Category 1 Accuracy: {category_1_accuracy}')
+    X_normalized = np.empty_like(X_test, dtype=np.float64)  
+    for sequence in range(X_test.shape[0]):
+        first_data_point = X_test[0, 0] 
+        X_normalized = (X_test - first_data_point) / first_data_point
+        X_test[:, :, :7] = X_normalized[:, :, :7]
 
-column_names = scaled_data_2.columns.tolist()  
+    # test the model
+    predictions = model.predict(X_test)
+
+    date = i+1
+
+    actual_change = y_test.item()
+    predictions = predictions.item()
+
+    print(f"predictions: {predictions}")
+
+    #load into table
+    cur.execute("INSERT INTO stock_predictions_v4 (date, actual_change, predicted_change) VALUES (%s, %s, %s)",
+        (date, actual_change, predictions))
+
+
+conn.commit()
 
 conn.close()
